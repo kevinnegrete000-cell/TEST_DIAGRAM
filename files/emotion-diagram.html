@@ -1,0 +1,453 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<title>Emotion Diagram — Media Museum</title>
+<style>
+* { margin:0; padding:0; box-sizing:border-box; }
+body {
+  background: #f0ede8;
+  overflow: hidden;
+  transition: background-color 1.3s ease;
+  cursor: crosshair;
+}
+canvas { display: block; }
+#hint {
+  position: fixed;
+  bottom: 28px;
+  left: 50%;
+  transform: translateX(-50%);
+  font: 10px/1 'Helvetica Neue', sans-serif;
+  letter-spacing: 0.22em;
+  text-transform: uppercase;
+  color: #bbb;
+  pointer-events: none;
+  transition: opacity 1.5s;
+}
+
+/* ── TAB NAVIGATION ── */
+#tab-nav {
+  position: fixed;
+  top: 16px;
+  left: 50%;
+  transform: translateX(-50%);
+  z-index: 200;
+  display: flex;
+  gap: 0;
+  pointer-events: all;
+}
+
+.tab-btn {
+  font-family: 'Helvetica Neue', Helvetica, sans-serif;
+  font-size: 9px;
+  letter-spacing: 0.3em;
+  text-transform: uppercase;
+  padding: 7px 18px;
+  border: 1px solid rgba(0,0,0,0.15);
+  background: rgba(240,237,232,0.92);
+  color: #999;
+  cursor: pointer;
+  transition: all 0.2s;
+  text-decoration: none;
+  display: flex;
+  align-items: center;
+  gap: 7px;
+}
+
+.tab-btn::before {
+  content: '';
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  background: #ccc;
+  transition: all 0.2s;
+}
+
+.tab-btn.active {
+  color: #222;
+  border-color: rgba(0,0,0,0.35);
+  border-bottom: 2px solid #222;
+  background: rgba(240,237,232,1);
+}
+
+.tab-btn.active::before {
+  background: #222;
+}
+
+.tab-btn:hover:not(.active) {
+  color: #444;
+  border-color: rgba(0,0,0,0.25);
+}
+
+.tab-btn:first-child { border-radius: 2px 0 0 2px; }
+.tab-btn:last-child  { border-radius: 0 2px 2px 0; border-left: none; }
+</style>
+</head>
+<body>
+<canvas id="c"></canvas>
+<nav id="tab-nav">
+  <a class="tab-btn" href="building_diagram_marathon_seed_intro_mouse_pan.html">STRUCTURAL ANALYSIS</a>
+  <span class="tab-btn active">EMOTION DIAGRAM</span>
+</nav>
+<div id="hint">hover the blobs to reveal</div>
+<script>
+const canvas = document.getElementById('c');
+const ctx    = canvas.getContext('2d');
+let W = canvas.width  = window.innerWidth;
+let H = canvas.height = window.innerHeight;
+
+window.addEventListener('resize', () => {
+  W = canvas.width  = window.innerWidth;
+  H = canvas.height = window.innerHeight;
+  initBlobs();
+});
+window.addEventListener('mousemove', e => { mouse.x = e.clientX; mouse.y = e.clientY; });
+setTimeout(() => document.getElementById('hint').style.opacity = 0, 4500);
+
+let mouse = { x:-999, y:-999 };
+let T = 0, lastHov = -1;
+
+// ── BLOB DEFINITIONS ──────────────────────────────────────────────
+const DEFS = [
+  { fx:0.13, fy:0.34, frx:0.13, fry:0.15, c:['#e8271a','#ff6633'], bg:'#f9ddd9', label:'INTERFERENCE', words:['reframe','fragment','remix'] },
+  { fx:0.36, fy:0.25, frx:0.11, fry:0.14, c:['#7744cc','#4466ee'], bg:'#e2dbf7', label:'SEDIMENT',     words:['imprint','compress'] },
+  { fx:0.50, fy:0.27, frx:0.13, fry:0.16, c:['#e6bb00','#ffaa00'], bg:'#fdf5cc', label:'CURRENT',      words:['transmit','project','amplify'] },
+  { fx:0.50, fy:0.67, frx:0.18, fry:0.16, c:['#e8108a','#cc0077'], bg:'#fad5ec', label:'FEEDBACK',     words:['respond','react','adapt'] },
+  { fx:0.28, fy:0.64, frx:0.20, fry:0.18, c:['#ff2299','#ff66cc'], bg:'#fce0f0', label:null,            words:[] },
+  { fx:0.68, fy:0.52, frx:0.11, fry:0.19, c:['#888','#bbb'],       bg:'#e8e8e8', label:'PRESENCE',     words:['witness','linger','hold'] },
+  { fx:0.84, fy:0.48, frx:0.16, fry:0.24, c:['#e07030','#3388cc'], bg:'#ddeef5', label:'DRIFT',        words:['breathe','absorb','linger'] },
+  { fx:0.66, fy:0.35, frx:0.055,fry:0.08, c:['#22bb55','#55ee88'], bg:'#d5f5e0', label:null,            words:[] },
+];
+
+let blobs = [];
+
+function makeSplatter(N) {
+  return {
+    offsets: Array.from({length:N}, () => {
+      let o = 0.82 + Math.random()*0.36;
+      if (Math.random()<0.2)  o += Math.random()*0.3;
+      if (Math.random()<0.18) o -= Math.random()*0.22;
+      return Math.max(0.45, Math.min(1.5, o));
+    }),
+    phases: Array.from({length:N}, () => Math.random()*Math.PI*2)
+  };
+}
+
+function initBlobs() {
+  blobs = DEFS.map((d, i) => {
+    const N  = 22;
+    const ex = blobs[i];
+    const { offsets, phases } = ex || makeSplatter(N);
+    return {
+      ...d, N, offsets, phases,
+      cx: d.fx*W, cy: d.fy*H,
+      rx: d.frx*W, ry: d.fry*H,
+      hov:        ex?.hov        ?? 0,
+      sc:         ex?.sc         ?? 1,
+      drips:      ex?.drips      ?? [],
+      lastDrip:   ex?.lastDrip   ?? -99,
+      lastRipple: ex?.lastRipple ?? -99,
+      ripples:    ex?.ripples    ?? [],
+      // word explosion particles
+      wordParticles: ex?.wordParticles ?? [],
+      lastWordBurst: ex?.lastWordBurst ?? -99,
+    };
+  });
+}
+initBlobs();
+
+// ── COLOR HELPERS ─────────────────────────────────────────────────
+function hr(h){ return parseInt(h.slice(1,3),16)||0; }
+function hg(h){ return parseInt(h.slice(3,5),16)||0; }
+function hb(h){ return parseInt(h.slice(5,7),16)||0; }
+function rgba(hex,a){ return `rgba(${hr(hex)},${hg(hex)},${hb(hex)},${a.toFixed(3)})`; }
+function gray(hex,a){ const v=Math.round(0.299*hr(hex)+0.587*hg(hex)+0.114*hb(hex)); return `rgba(${v},${v},${v},${a.toFixed(3)})`; }
+
+// ── BUILD BLOB POINTS ─────────────────────────────────────────────
+function buildPoints(b) {
+  const { cx, cy, rx, ry, N, offsets, phases, hov, sc } = b;
+  return Array.from({length:N}, (_,i) => {
+    const a     = (i/N)*Math.PI*2;
+    const idle  = Math.sin(T*0.45+phases[i])*0.032 + Math.sin(T*0.25+phases[i]*1.8)*0.016;
+    const jello = hov*(Math.sin(T*4.5+phases[i])*0.038 + Math.sin(T*2.6+i)*0.02);
+    const r     = (offsets[i]+idle+jello)*sc;
+    return { x: cx+rx*r*Math.cos(a), y: cy+ry*r*Math.sin(a) };
+  });
+}
+
+// ── TRACE SMOOTH PATH ─────────────────────────────────────────────
+function tracePath(pts) {
+  const N=pts.length;
+  ctx.beginPath();
+  for (let i=0;i<N;i++) {
+    const p0=pts[(i-1+N)%N],p1=pts[i],p2=pts[(i+1)%N],p3=pts[(i+2)%N];
+    if(i===0) ctx.moveTo(p1.x,p1.y);
+    ctx.bezierCurveTo(
+      p1.x+(p2.x-p0.x)/5.5, p1.y+(p2.y-p0.y)/5.5,
+      p2.x-(p3.x-p1.x)/5.5, p2.y-(p3.y-p1.y)/5.5,
+      p2.x, p2.y
+    );
+  }
+  ctx.closePath();
+}
+
+// ── SOFT EDGE BLOB ────────────────────────────────────────────────
+// Draws the blob multiple times with increasing blur + decreasing alpha
+// for a feathered, melting edge effect
+function drawSoftBlob(pts, fillFn, layers=5) {
+  for (let l=layers; l>=0; l--) {
+    const blur  = l * 14;
+    const alpha = l===0 ? 1 : 0.18 - l*0.02;
+    ctx.save();
+    ctx.filter = `blur(${blur}px)`;
+    ctx.globalAlpha = l===0 ? 1 : alpha;
+    tracePath(pts);
+    fillFn(l, layers);
+    ctx.fill();
+    ctx.restore();
+  }
+}
+
+// ── HIT TEST ─────────────────────────────────────────────────────
+function hitTest(mx,my) {
+  for(let i=blobs.length-1;i>=0;i--) {
+    const b=blobs[i];
+    const dx=(mx-b.cx)/(b.rx*b.sc*1.2), dy=(my-b.cy)/(b.ry*b.sc*1.2);
+    if(dx*dx+dy*dy<1) return i;
+  }
+  return -1;
+}
+
+// ── DRIPS ─────────────────────────────────────────────────────────
+function maybeSpawnDrip(b,pts) {
+  if(T-b.lastDrip<0.65) return;
+  b.lastDrip=T;
+  const lower=pts.filter(p=>p.y>b.cy);
+  if(!lower.length) return;
+  const o=lower[Math.floor(Math.random()*lower.length)];
+  b.drips.push({x:o.x,y:o.y,vy:0.4+Math.random()*0.5,r:5+Math.random()*5,life:1,col:b.c[0]});
+}
+
+// ── WORD EXPLOSION ────────────────────────────────────────────────
+// Each word gets its own particle: shoots outward from center, overshoots, settles
+function spawnWordBurst(b) {
+  if(T - b.lastWordBurst < 0.15) return;
+  b.lastWordBurst = T;
+  b.wordParticles = [];
+
+  b.words.forEach((word, wi) => {
+    // Random burst angle, slightly spread per word
+    const baseAngle = -Math.PI/2 + (wi-(b.words.length-1)/2) * 0.55;
+    const angle = baseAngle + (Math.random()-0.5)*0.3;
+    const dist  = (b.rx + b.ry) * 0.5 * b.sc; // how far it flies
+    const delay = wi * 0.08; // tiny cascade delay in seconds
+
+    b.wordParticles.push({
+      word,
+      // final resting position
+      tx: b.cx + Math.cos(angle) * dist * 0.55,
+      ty: b.cy + Math.sin(angle) * dist * 0.55 + wi*22,
+      // start: at blob center
+      x: b.cx, y: b.cy,
+      // overshoot target
+      ox: b.cx + Math.cos(angle) * dist * 0.85,
+      oy: b.cy + Math.sin(angle) * dist * 0.85 + wi*24,
+      scale: 0,
+      alpha: 0,
+      born: T + delay,
+      phase: 0, // 0=waiting, 1=exploding out, 2=settling
+    });
+  });
+}
+
+function updateWordParticle(p, b) {
+  if(T < p.born) return; // wait for delay
+  const age = T - p.born;
+
+  if(age < 0.25) {
+    // Phase 1: shoot outward + scale up
+    const prog = age/0.25;
+    const ease = 1-Math.pow(1-prog,3); // ease out cubic
+    p.x     = b.cx + (p.ox-b.cx)*ease;
+    p.y     = b.cy + (p.oy-b.cy)*ease;
+    p.scale = 1.4 * ease;
+    p.alpha = ease;
+  } else if(age < 0.45) {
+    // Phase 2: snap back to rest (elastic)
+    const prog = (age-0.25)/0.20;
+    const ease = 1-Math.pow(1-prog,2);
+    p.x     = p.ox + (p.tx-p.ox)*ease;
+    p.y     = p.oy + (p.ty-p.oy)*ease;
+    p.scale = 1.4 - 0.4*ease;
+    p.alpha = 1;
+  } else {
+    // Phase 3: settled
+    p.x     = p.tx;
+    p.y     = p.ty;
+    p.scale = 1;
+    p.alpha = 1;
+  }
+}
+
+// ── MAIN LOOP ─────────────────────────────────────────────────────
+function draw() {
+  T += 0.016;
+  ctx.clearRect(0,0,W,H);
+
+  const hovIdx = hitTest(mouse.x, mouse.y);
+  document.body.style.backgroundColor = hovIdx>=0 ? blobs[hovIdx].bg : '#f0ede8';
+
+  // On blob change
+  if(hovIdx !== lastHov) {
+    if(hovIdx>=0) spawnWordBurst(blobs[hovIdx]);
+    else if(lastHov>=0) blobs[lastHov].wordParticles=[];
+    lastHov=hovIdx;
+  }
+
+  blobs.forEach((b,i) => {
+    const isHov = hovIdx===i;
+    b.hov += ((isHov?1:0)-b.hov)*0.07;
+    b.sc  += ((isHov?1.18:1.0)-b.sc)*0.055;
+
+    // Ripples
+    if(isHov && T-b.lastRipple>0.3) {
+      b.ripples.push({x:mouse.x,y:mouse.y,r:4,maxR:Math.max(b.rx,b.ry)*b.sc*2,a:1});
+      b.lastRipple=T;
+    }
+    b.ripples.forEach(r=>{r.r+=3.5;r.a=Math.max(0,1-r.r/r.maxR);});
+    b.ripples=b.ripples.filter(r=>r.a>0.004);
+
+    const pts = buildPoints(b);
+    if(isHov) maybeSpawnDrip(b,pts);
+
+    // ── 1. SOFT GRAYSCALE BLOB ──
+    // Outer soft glow layers
+    for(let l=4;l>=1;l--) {
+      ctx.save();
+      ctx.filter=`blur(${l*16}px)`;
+      ctx.globalAlpha=0.13-l*0.02;
+      tracePath(pts);
+      const gOuter=ctx.createRadialGradient(b.cx,b.cy,0,b.cx,b.cy,Math.max(b.rx,b.ry)*b.sc*1.4);
+      gOuter.addColorStop(0,gray(b.c[0],0.9));
+      gOuter.addColorStop(1,gray(b.c[b.c.length-1],0.5));
+      ctx.fillStyle=gOuter;
+      ctx.fill();
+      ctx.restore();
+    }
+    // Solid core
+    ctx.save();
+    ctx.filter='blur(6px)'; // slight core softness
+    tracePath(pts);
+    const gGray=ctx.createRadialGradient(b.cx-b.rx*0.2,b.cy-b.ry*0.25,b.rx*0.05,b.cx,b.cy,Math.max(b.rx,b.ry)*b.sc*1.2);
+    gGray.addColorStop(0,gray(b.c[0],0.9));
+    gGray.addColorStop(0.7,gray(b.c[0],0.82));
+    gGray.addColorStop(1,gray(b.c[b.c.length-1],0.4));
+    ctx.fillStyle=gGray;
+    ctx.fill();
+    ctx.restore();
+
+    // ── 2. RIPPLE COLOR (clipped) ──
+    b.ripples.forEach(r=>{
+      ctx.save();
+      // clip to blob (no blur on clip path)
+      ctx.filter='none';
+      tracePath(pts);
+      ctx.clip();
+      ctx.filter=`blur(8px)`;
+      const g2=ctx.createRadialGradient(r.x,r.y,0,r.x,r.y,r.maxR);
+      g2.addColorStop(0,   rgba(b.c[0],r.a));
+      g2.addColorStop(0.45,rgba(b.c[Math.min(1,b.c.length-1)],r.a*0.8));
+      g2.addColorStop(1,   rgba(b.c[0],0));
+      ctx.beginPath();
+      ctx.arc(r.x,r.y,r.r*2,0,Math.PI*2);
+      ctx.fillStyle=g2;
+      ctx.fill();
+      ctx.restore();
+    });
+
+    // ── 3. SUSTAINED COLOR on hover ──
+    if(b.hov>0.01) {
+      // Soft outer color glow
+      for(let l=3;l>=1;l--) {
+        ctx.save();
+        ctx.filter=`blur(${l*18}px)`;
+        ctx.globalAlpha=b.hov*(0.12-l*0.02);
+        tracePath(pts);
+        const gc=ctx.createRadialGradient(b.cx,b.cy,0,b.cx,b.cy,Math.max(b.rx,b.ry)*b.sc*1.5);
+        gc.addColorStop(0,rgba(b.c[0],0.9));
+        gc.addColorStop(1,rgba(b.c[0],0));
+        ctx.fillStyle=gc;
+        ctx.fill();
+        ctx.restore();
+      }
+      // Core color fill
+      ctx.save();
+      ctx.filter='blur(5px)';
+      tracePath(pts);
+      const gc2=ctx.createRadialGradient(b.cx,b.cy,0,b.cx,b.cy,Math.max(b.rx,b.ry)*b.sc*1.3);
+      gc2.addColorStop(0,  rgba(b.c[0],b.hov*0.78));
+      gc2.addColorStop(0.6,rgba(b.c[Math.min(1,b.c.length-1)],b.hov*0.48));
+      gc2.addColorStop(1,  rgba(b.c[0],0));
+      ctx.fillStyle=gc2;
+      ctx.fill();
+      ctx.restore();
+    }
+
+    // ── 4. DRIPS ──
+    b.drips=b.drips.filter(d=>d.life>0.02);
+    b.drips.forEach(d=>{
+      d.y+=d.vy; d.vy+=0.05; d.r*=0.987; d.life-=0.012;
+      ctx.save();
+      ctx.globalAlpha=d.life*0.65;
+      ctx.filter=`blur(3px)`;
+      const gd=ctx.createRadialGradient(d.x,d.y-d.r*0.1,0,d.x,d.y,d.r*1.3);
+      gd.addColorStop(0,rgba(d.col,0.9));
+      gd.addColorStop(1,rgba(d.col,0));
+      ctx.beginPath();
+      ctx.ellipse(d.x,d.y,d.r*0.5,d.r,0,0,Math.PI*2);
+      ctx.fillStyle=gd;
+      ctx.fill();
+      ctx.restore();
+    });
+
+    // ── 5. LABEL ──
+    if(b.label) {
+      ctx.save();
+      ctx.filter='none';
+      ctx.globalAlpha=0.15+b.hov*0.85;
+      ctx.fillStyle='#fff';
+      ctx.font=`bold 13px Helvetica, sans-serif`;
+      ctx.textAlign='center';
+      ctx.shadowColor='rgba(0,0,0,0.3)';
+      ctx.shadowBlur=7;
+      ctx.fillText(b.label, b.cx, b.cy - b.ry*b.sc*0.12);
+      ctx.restore();
+    }
+
+    // ── 6. WORD EXPLOSION PARTICLES ──
+    if(isHov && b.wordParticles.length) {
+      b.wordParticles.forEach(p => {
+        updateWordParticle(p, b);
+        if(p.alpha < 0.005) return;
+        ctx.save();
+        ctx.filter='none';
+        ctx.globalAlpha = p.alpha;
+        ctx.fillStyle   = '#fff';
+        ctx.font        = `${Math.round(15*p.scale)}px Helvetica, sans-serif`;
+        ctx.textAlign   = 'center';
+        ctx.textBaseline= 'middle';
+        ctx.shadowColor = rgba(b.c[0], 0.6);
+        ctx.shadowBlur  = 12*p.scale;
+        ctx.fillText(p.word, p.x, p.y);
+        ctx.restore();
+      });
+    }
+  });
+
+  requestAnimationFrame(draw);
+}
+
+draw();
+</script>
+</body>
+</html>
